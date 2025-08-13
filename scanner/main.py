@@ -1,5 +1,4 @@
 import os
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from .utils.logging import get_logger
@@ -15,7 +14,7 @@ from .analysis.fingerprint import fingerprint_stack
 from .analysis.discovery import check_directory_listing, probe_hidden_paths, probe_exposed_files
 from .reporting.report_builder import ReportBuilder, finding_dict
 
-dataclass
+@dataclass
 class Config:
     target: str
     max_pages: int
@@ -30,9 +29,9 @@ class Config:
     verbose: bool
     json_output: bool
 
-dataclass
+@dataclass
 class ScanState:
-    pages: dict = field(default_factory=dict)  # url -> {status, content, headers}
+    pages: dict = field(default_factory=dict)          # url -> {status, content, headers}
     forms: list = field(default_factory=list)
     findings: list = field(default_factory=list)
     stack: dict = field(default_factory=dict)
@@ -45,7 +44,7 @@ class ScanState:
 
 def severity_sort_key(f):
     mapping = {"High": 3, "Medium": 2, "Low": 1, "Info": 0}
-    return mapping.get(f.get("severity","Info"), 0)
+    return mapping.get(f.get("severity", "Info"), 0)
 
 def run_scan(args):
     logger = get_logger(args.verbose)
@@ -65,6 +64,7 @@ def run_scan(args):
         verbose=args.verbose,
         json_output=args.json or ("json" in formats)
     )
+
     state = ScanState()
     state.start_time = datetime.now(timezone.utc).isoformat()
     state.config_used = cfg.__dict__.copy()
@@ -102,7 +102,7 @@ def run_scan(args):
     state.probed_hidden_paths = probe_hidden_paths(client, cfg.target, crawler.hidden_wordlist)
     state.exposed_files = probe_exposed_files(client, cfg.target, crawler.exposed_files_list)
 
-    # Security headers
+    # Security headers (use root page if available, else first page)
     if state.pages:
         root_meta = state.pages.get(cfg.target) or next(iter(state.pages.values()))
         headers = root_meta.get("headers", {})
@@ -114,11 +114,11 @@ def run_scan(args):
         cookie_findings = analyze_cookies(meta.get("cookies", []), url)
         state.findings.extend(cookie_findings)
 
-    # Forms-based + parameter reflection
+    # Forms
     form_findings = extract_form_findings(state.forms)
     state.findings.extend(form_findings)
 
-    # Reflection tests (XSS-like)
+    # XSS reflection probes
     xss_findings = test_reflected_xss(client, state.pages, state.forms)
     state.findings.extend(xss_findings)
 
@@ -129,7 +129,7 @@ def run_scan(args):
     # Fingerprint
     state.stack = fingerprint_stack(state.pages)
 
-    # Directory listing as findings
+    # Convert discovery info into findings
     for entry in state.directory_listing:
         state.findings.append(finding_dict(
             title="Potential Directory Listing Enabled",
@@ -165,12 +165,11 @@ def run_scan(args):
                 recommendation="Remove or restrict sensitive files from public access."
             ))
 
-    # Sort findings by severity then title
+    # Order by severity then insertion order
     state.findings.sort(key=severity_sort_key, reverse=True)
 
     state.end_time = datetime.now(timezone.utc).isoformat()
 
-    # Build report
     builder = ReportBuilder(
         target=cfg.target,
         state=state,
